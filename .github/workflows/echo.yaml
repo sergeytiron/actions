@@ -1,6 +1,11 @@
 name: echo
 on:
   workflow_dispatch:
+    inputs:
+      branch:
+        default: main
+        required: true
+        type: string
   workflow_call:
     inputs:
       branch:
