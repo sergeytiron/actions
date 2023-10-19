@@ -7,6 +7,6 @@ jobs:
     steps:
       - run: |
           timestamp="$(date +%s)"
-          echo "$timestamp" > "$timestamp""
+          echo "$timestamp" > "$timestamp"
       - uses: peter-evans/create-pull-request@v5
  
