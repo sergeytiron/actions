@@ -1,11 +1,24 @@
 name: open-pr
 on:
   workflow_dispatch:
+    inputs:
+      branch:
+        default: main
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      branch:
+        default: main
+        required: true
+        type: string
 jobs:
   open-pr:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
       - run: |
           timestamp="$(date +%s)"
           echo "$timestamp" > "$timestamp"
