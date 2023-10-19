@@ -5,6 +5,7 @@ jobs:
   open-pr:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - run: |
           timestamp="$(date +%s)"
           echo "$timestamp" > "$timestamp"
