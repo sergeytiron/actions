@@ -10,4 +10,3 @@ jobs:
           timestamp="$(date +%s)"
           echo "$timestamp" > "$timestamp"
       - uses: peter-evans/create-pull-request@v5
- 
