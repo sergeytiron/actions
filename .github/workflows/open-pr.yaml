@@ -16,4 +16,6 @@ jobs:
         with:
           branch: auto-pr
   echo:
-    uses: ./.github/workflows/echo.yaml
+    uses: ./.github/workflows/echo.yaml@auto-pr
+    needs:
+      open-pr
