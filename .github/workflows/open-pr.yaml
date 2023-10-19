@@ -1,0 +1,12 @@
+name: open-pr
+on:
+  workflow_dispatch:
+jobs:
+  open-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          timestamp="$(date +%s)"
+          echo "$timestamp" > "$timestamp""
+      - uses: peter-evans/create-pull-request@v5
+ 
