@@ -1,0 +1,27 @@
+name: Approve PR
+
+on:
+  workflow_dispatch:
+    inputs:
+      ENV:
+        description: environment to deploy
+        default: dev
+        required: false
+        type: choice
+        options:
+          - dev
+          - qa
+          - uat
+          - prod
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: "${{ github.event.inputs.ENV }}"
+    env:
+      ENV: "${{ github.event.inputs.ENV }}"
+    steps:
+      - name: echo
+        run: |
+          #!/bin/bash
+          echo "$ENV"
