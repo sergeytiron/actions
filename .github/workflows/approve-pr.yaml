@@ -27,6 +27,7 @@ jobs:
           echo "$ENV"
 
   deploy-2:
+    needs: deploy-1
     runs-on: ubuntu-latest
     env:
       ENV: "${{ github.event.inputs.ENV }}"
