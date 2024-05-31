@@ -15,9 +15,19 @@ on:
           - prod
 
 jobs:
-  deploy:
+  deploy-1:
     runs-on: ubuntu-latest
     environment: "${{ github.event.inputs.ENV }}"
+    env:
+      ENV: "${{ github.event.inputs.ENV }}"
+    steps:
+      - name: echo
+        run: |
+          #!/bin/bash
+          echo "$ENV"
+
+  deploy-2:
+    runs-on: ubuntu-latest
     env:
       ENV: "${{ github.event.inputs.ENV }}"
     steps:
