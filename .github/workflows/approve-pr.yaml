@@ -13,6 +13,8 @@ on:
           - qa
           - uat
           - prod
+      environment:
+        type: environment
 
 jobs:
   deploy-1:
