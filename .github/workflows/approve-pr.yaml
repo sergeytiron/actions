@@ -3,25 +3,15 @@ name: Approve PR
 on:
   workflow_dispatch:
     inputs:
-      ENV:
-        description: environment to deploy
-        default: dev
-        required: false
-        type: choice
-        options:
-          - dev
-          - qa
-          - uat
-          - prod
       environment:
         type: environment
 
 jobs:
   deploy-1:
     runs-on: ubuntu-latest
-    environment: "${{ github.event.inputs.ENV }}"
+    environment: "${{ github.event.inputs.environment }}"
     env:
-      ENV: "${{ github.event.inputs.ENV }}"
+      ENV: "${{ github.event.inputs.environment }}"
     steps:
       - name: echo
         run: |
@@ -32,7 +22,7 @@ jobs:
     needs: deploy-1
     runs-on: ubuntu-latest
     env:
-      ENV: "${{ github.event.inputs.ENV }}"
+      ENV: "${{ github.event.inputs.environment }}"
     steps:
       - name: echo
         run: |
