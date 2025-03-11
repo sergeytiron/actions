@@ -2,7 +2,7 @@ FROM node:16-alpine
 
 # Set a label for the environment (will be overridden during deployment)
 ENV ENVIRONMENT="default"
-ENV PROJECT_NAME="Project-A"
+ENV PROJECT_NAME="Project A"
 
 # Create app directory
 WORKDIR /app
