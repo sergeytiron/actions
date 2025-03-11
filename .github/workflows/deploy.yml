@@ -157,22 +157,13 @@ jobs:
             
           echo "$PROJECT_NAME development deployment completed successfully"
 
-  # Wait for staging approval
-  staging-approval:
-    needs: dev-deployment
+  # Deploy to Staging Environment
+  staging-deployment:
+    needs: [detect-changes, build]
+    if: ${{ fromJson(needs.detect-changes.outputs.matrix).matrix != '[]' }}
     runs-on: ubuntu-latest
     environment:
       name: staging
-      url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-    steps:
-      - name: Approval gate
-        run: echo "Deployment to staging environment approved!"
-
-  # Deploy to Staging Environment
-  staging-deployment:
-    needs: [detect-changes, staging-approval]
-    if: ${{ fromJson(needs.detect-changes.outputs.matrix).matrix != '[]' }}
-    runs-on: ubuntu-latest
     strategy:
       matrix:
         project: ${{ fromJson(needs.detect-changes.outputs.matrix).matrix }}
@@ -207,22 +198,13 @@ jobs:
             
           echo "$PROJECT_NAME staging deployment completed successfully"
 
-  # Wait for production approval
-  production-approval:
-    needs: staging-deployment
+  # Deploy to Production Environment
+  production-deployment:
+    needs: [detect-changes, build]
+    if: ${{ fromJson(needs.detect-changes.outputs.matrix).matrix != '[]' }}
     runs-on: ubuntu-latest
     environment:
       name: production
-      url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-    steps:
-      - name: Approval gate
-        run: echo "Deployment to production environment approved!"
-
-  # Deploy to Production Environment
-  production-deployment:
-    needs: [detect-changes, production-approval]
-    if: ${{ fromJson(needs.detect-changes.outputs.matrix).matrix != '[]' }}
-    runs-on: ubuntu-latest
     strategy:
       matrix:
         project: ${{ fromJson(needs.detect-changes.outputs.matrix).matrix }}
