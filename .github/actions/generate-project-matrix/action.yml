@@ -1,0 +1,97 @@
+name: 'Generate Project Matrix'
+description: 'Generates a dynamic matrix of projects based on changes or user input'
+inputs:
+  deploy_all:
+    description: 'Whether to deploy all projects regardless of changes'
+    required: false
+    default: 'false'
+  specific_project:
+    description: 'A specific project to deploy'
+    required: false
+    default: ''
+  project_main_changed:
+    description: 'Whether project-main has changed'
+    required: false
+    default: 'false'
+  project_a_changed:
+    description: 'Whether project-a has changed'
+    required: false
+    default: 'false'
+  project_b_changed:
+    description: 'Whether project-b has changed'
+    required: false
+    default: 'false'
+
+outputs:
+  matrix:
+    description: 'The generated project matrix'
+    value: ${{ steps.generate.outputs.result }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Generate Matrix
+      id: generate
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const deployAll = '${{ inputs.deploy_all }}' === 'true';
+          const specificProject = '${{ inputs.specific_project }}';
+          
+          // Define the base projects list
+          const allProjects = [
+            {"project_path": "project-main", "project_name": "Main Project", "image_tag": "project-main:latest"},
+            {"project_path": "project-a", "project_name": "Project A", "image_tag": "project-a:latest"},
+            {"project_path": "project-b", "project_name": "Project B", "image_tag": "project-b:latest"}
+          ];
+          
+          // Function to find a specific project by path
+          const findProject = (path) => {
+            return allProjects.find(p => p.project_path === path);
+          };
+          
+          // Determine which projects to include
+          let projectsToDeploy = [];
+          
+          // Case 1: Deploy All selected
+          if (deployAll) {
+            console.log('Including all projects (deploy_all flag is set)');
+            projectsToDeploy = allProjects;
+          }
+          // Case 2: Specific project selected
+          else if (specificProject && specificProject.trim() !== '') {
+            const project = findProject(specificProject.trim());
+            if (project) {
+              console.log(`Including specifically requested project: ${specificProject}`);
+              projectsToDeploy = [project];
+            } else {
+              console.log(`Warning: Requested project ${specificProject} not found`);
+            }
+          }
+          // Case 3: Auto-detect changed projects
+          else {
+            // Check changed paths from the filter
+            if ('${{ inputs.project_main_changed }}' === 'true') {
+              projectsToDeploy.push(findProject('project-main'));
+              console.log('Including project-main (detected changes)');
+            }
+            if ('${{ inputs.project_a_changed }}' === 'true') {
+              projectsToDeploy.push(findProject('project-a'));
+              console.log('Including project-a (detected changes)');
+            }
+            if ('${{ inputs.project_b_changed }}' === 'true') {
+              projectsToDeploy.push(findProject('project-b'));
+              console.log('Including project-b (detected changes)');
+            }
+            
+            // Fallback to all projects if none changed (or on first run)
+            if (projectsToDeploy.length === 0) {
+              console.log('No changed projects detected. Falling back to all projects.');
+              projectsToDeploy = allProjects;
+            }
+          }
+          
+          // Set the matrix output
+          const matrix = projectsToDeploy.filter(p => p !== undefined);
+          console.log(`Projects matrix: ${JSON.stringify(matrix)}`);
+          return {matrix};
