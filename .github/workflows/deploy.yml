@@ -1,11 +1,21 @@
-name: Sequential Environment Deployment
+name: Multi-Project Sequential Deployment
 
 on:
   push:
     branches:
       - main
-  # Allow manual trigger
+  # Allow manual trigger with project selection
   workflow_dispatch:
+    inputs:
+      project:
+        description: 'Project to deploy'
+        required: true
+        type: choice
+        options:
+          - main
+          - project-a
+          - project-b
+        default: 'main'
 
 # IMPORTANT: For the approval gates to work, you MUST configure environments in GitHub:
 # 1. Go to your repository settings -> Environments
@@ -13,7 +23,43 @@ on:
 # 3. For 'staging' and 'production', enable "Required reviewers" and add reviewers
 # Without this configuration, the workflow will NOT pause for approval
 jobs:
+  # Determine which project to build
+  project-config:
+    runs-on: ubuntu-latest
+    outputs:
+      project_path: ${{ steps.set-project.outputs.project_path }}
+      project_name: ${{ steps.set-project.outputs.project_name }}
+      image_tag: ${{ steps.set-project.outputs.image_tag }}
+    steps:
+      - name: Set project parameters
+        id: set-project
+        run: |
+          # Default to workflow_dispatch input, fallback to 'main' if not provided
+          PROJECT="${{ github.event.inputs.project || 'main' }}"
+          
+          # Set output values based on the selected project
+          if [ "$PROJECT" = "project-a" ]; then
+            echo "project_path=project-a" >> $GITHUB_OUTPUT
+            echo "project_name=Project A" >> $GITHUB_OUTPUT
+            echo "image_tag=project-a:latest" >> $GITHUB_OUTPUT
+          elif [ "$PROJECT" = "project-b" ]; then
+            echo "project_path=project-b" >> $GITHUB_OUTPUT
+            echo "project_name=Project B" >> $GITHUB_OUTPUT
+            echo "image_tag=project-b:latest" >> $GITHUB_OUTPUT
+          else
+            echo "project_path=." >> $GITHUB_OUTPUT
+            echo "project_name=Main Project" >> $GITHUB_OUTPUT
+            echo "image_tag=myapp:latest" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Display project info
+        run: |
+          echo "Deploying project: ${{ steps.set-project.outputs.project_name }}"
+          echo "Project path: ${{ steps.set-project.outputs.project_path }}"
+          echo "Docker image tag: ${{ steps.set-project.outputs.image_tag }}"
+
   build:
+    needs: project-config
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -25,79 +71,121 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v4
         with:
-          context: .
+          context: ${{ needs.project-config.outputs.project_path }}
           push: false
           load: true
-          tags: myapp:latest
+          tags: ${{ needs.project-config.outputs.image_tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Save Docker image as artifact
         run: |
-          docker save myapp:latest > myapp-image.tar
+          docker save ${{ needs.project-config.outputs.image_tag }} > docker-image.tar
           
       - name: Upload Docker image as artifact
         uses: actions/upload-artifact@v4
         with:
           name: docker-image
-          path: myapp-image.tar
+          path: docker-image.tar
+          retention-days: 1
+          
+      - name: Create build info file
+        run: |
+          echo "${{ needs.project-config.outputs.project_name }}" > build-info.txt
+          echo "${{ needs.project-config.outputs.image_tag }}" >> build-info.txt
+          
+      - name: Upload build info as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-info
+          path: build-info.txt
           retention-days: 1
 
   deploy-dev:
-    needs: build
+    needs: [project-config, build]
     runs-on: ubuntu-latest
     environment:
       name: development
     steps:
+      - name: Download build info
+        uses: actions/download-artifact@v4
+        with:
+          name: build-info
+          
       - name: Download Docker image
         uses: actions/download-artifact@v4
         with:
           name: docker-image
           
       - name: Load Docker image
-        run: docker load < myapp-image.tar
+        run: docker load < docker-image.tar
         
       - name: Run container in development
         run: |
-          docker run --rm -e ENVIRONMENT="development" -e ENV_CONFIG="Debug mode enabled" myapp:latest
-          echo "Development deployment completed successfully"
+          IMAGE_TAG=$(tail -n 1 build-info.txt)
+          docker run --rm \
+            -e ENVIRONMENT="development" \
+            -e ENV_CONFIG="Debug mode enabled" \
+            ${IMAGE_TAG}
+          PROJECT_NAME=$(head -n 1 build-info.txt)
+          echo "${PROJECT_NAME} development deployment completed successfully"
 
   deploy-staging:
-    needs: deploy-dev
+    needs: [project-config, deploy-dev]
     runs-on: ubuntu-latest
     environment:
       name: staging
       url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
+      - name: Download build info
+        uses: actions/download-artifact@v4
+        with:
+          name: build-info
+          
       - name: Download Docker image
         uses: actions/download-artifact@v4
         with:
           name: docker-image
           
       - name: Load Docker image
-        run: docker load < myapp-image.tar
+        run: docker load < docker-image.tar
         
       - name: Run container in staging
         run: |
-          docker run --rm -e ENVIRONMENT="staging" -e ENV_CONFIG="Performance testing enabled" myapp:latest
-          echo "Staging deployment completed successfully"
+          IMAGE_TAG=$(tail -n 1 build-info.txt)
+          docker run --rm \
+            -e ENVIRONMENT="staging" \
+            -e ENV_CONFIG="Performance testing enabled" \
+            ${IMAGE_TAG}
+          PROJECT_NAME=$(head -n 1 build-info.txt)
+          echo "${PROJECT_NAME} staging deployment completed successfully"
 
   deploy-production:
-    needs: deploy-staging
+    needs: [project-config, deploy-staging]
     runs-on: ubuntu-latest
     environment:
       name: production
       url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
+      - name: Download build info
+        uses: actions/download-artifact@v4
+        with:
+          name: build-info
+          
       - name: Download Docker image
         uses: actions/download-artifact@v4
         with:
           name: docker-image
           
       - name: Load Docker image
-        run: docker load < myapp-image.tar
+        run: docker load < docker-image.tar
         
       - name: Run container in production
         run: |
-          docker run --rm -e ENVIRONMENT="production" -e ENV_CONFIG="High availability mode" myapp:latest
-          echo "Production deployment completed successfully"
+          IMAGE_TAG=$(tail -n 1 build-info.txt)
+          docker run --rm \
+            -e ENVIRONMENT="production" \
+            -e ENV_CONFIG="High availability mode" \
+            ${IMAGE_TAG}
+          PROJECT_NAME=$(head -n 1 build-info.txt)
+          echo "${PROJECT_NAME} production deployment completed successfully"
