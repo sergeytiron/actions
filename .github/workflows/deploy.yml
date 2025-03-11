@@ -118,7 +118,7 @@ jobs:
 
   # Deploy to Development Environment
   dev-deployment:
-    needs: [build]
+    needs: [build, detect-changes]
     if: ${{ fromJson(needs.detect-changes.outputs.matrix).matrix != '[]' }}
     runs-on: ubuntu-latest
     strategy:
@@ -159,7 +159,7 @@ jobs:
 
   # Deploy to Staging Environment
   staging-deployment:
-    needs: [dev-deployment]
+    needs: [dev-deployment, detect-changes]
     if: ${{ fromJson(needs.detect-changes.outputs.matrix).matrix != '[]' }}
     runs-on: ubuntu-latest
     environment:
@@ -200,7 +200,7 @@ jobs:
 
   # Deploy to Production Environment
   production-deployment:
-    needs: [staging-deployment]
+    needs: [staging-deployment, detect-changes]
     if: ${{ fromJson(needs.detect-changes.outputs.matrix).matrix != '[]' }}
     runs-on: ubuntu-latest
     environment:
