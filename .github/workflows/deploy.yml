@@ -7,6 +7,11 @@ on:
   # Allow manual trigger
   workflow_dispatch:
 
+# IMPORTANT: For the approval gates to work, you MUST configure environments in GitHub:
+# 1. Go to your repository settings -> Environments
+# 2. Create environments named 'development', 'staging', and 'production'
+# 3. For 'staging' and 'production', enable "Required reviewers" and add reviewers
+# Without this configuration, the workflow will NOT pause for approval
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -41,7 +46,8 @@ jobs:
   deploy-dev:
     needs: build
     runs-on: ubuntu-latest
-    environment: development
+    environment:
+      name: development
     steps:
       - name: Download Docker image
         uses: actions/download-artifact@v4
@@ -54,12 +60,44 @@ jobs:
       - name: Run container in development
         run: |
           docker run --rm -e ENVIRONMENT="development" -e ENV_CONFIG="Debug mode enabled" myapp:latest
+          echo "Development deployment completed successfully"
 
-  wait-for-staging-approval:
+  deploy-staging:
     needs: deploy-dev
     runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
-      - name: Pause for approval
+      - name: Download Docker image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          
+      - name: Load Docker image
+        run: docker load < myapp-image.tar
+        
+      - name: Run container in staging
         run: |
-          echo "Development deployment complete. Waiting for manual approval to proceed to staging."
-          echo "To proceed to staging, manually run the 'Deploy to Staging' workflow."
+          docker run --rm -e ENVIRONMENT="staging" -e ENV_CONFIG="Performance testing enabled" myapp:latest
+          echo "Staging deployment completed successfully"
+
+  deploy-production:
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Download Docker image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          
+      - name: Load Docker image
+        run: docker load < myapp-image.tar
+        
+      - name: Run container in production
+        run: |
+          docker run --rm -e ENVIRONMENT="production" -e ENV_CONFIG="High availability mode" myapp:latest
+          echo "Production deployment completed successfully"
