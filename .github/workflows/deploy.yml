@@ -1,0 +1,110 @@
+name: Sequential Environment Deployment
+
+on:
+  push:
+    branches:
+      - main
+  # Allow manual trigger
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: false
+          load: true
+          tags: myapp:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Save Docker image as artifact
+        run: |
+          docker save myapp:latest > myapp-image.tar
+          
+      - name: Upload Docker image as artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: docker-image
+          path: myapp-image.tar
+          retention-days: 1
+
+  deploy-dev:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: development
+    steps:
+      - name: Download Docker image
+        uses: actions/download-artifact@v3
+        with:
+          name: docker-image
+          
+      - name: Load Docker image
+        run: docker load < myapp-image.tar
+        
+      - name: Run container in development
+        run: |
+          docker run --rm -e ENVIRONMENT="development" -e ENV_CONFIG="Debug mode enabled" myapp:latest
+
+  approval-to-staging:
+    needs: deploy-dev
+    runs-on: ubuntu-latest
+    environment:
+      name: staging-approval
+      url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Approval gate to staging
+        run: echo "Deployment to staging approved!"
+
+  deploy-staging:
+    needs: approval-to-staging
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Download Docker image
+        uses: actions/download-artifact@v3
+        with:
+          name: docker-image
+          
+      - name: Load Docker image
+        run: docker load < myapp-image.tar
+        
+      - name: Run container in staging
+        run: |
+          docker run --rm -e ENVIRONMENT="staging" -e ENV_CONFIG="Performance testing enabled" myapp:latest
+
+  approval-to-production:
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    environment:
+      name: production-approval
+      url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Approval gate to production
+        run: echo "Deployment to production approved!"
+
+  deploy-production:
+    needs: approval-to-production
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Download Docker image
+        uses: actions/download-artifact@v3
+        with:
+          name: docker-image
+          
+      - name: Load Docker image
+        run: docker load < myapp-image.tar
+        
+      - name: Run container in production
+        run: |
+          docker run --rm -e ENVIRONMENT="production" -e ENV_CONFIG="High availability mode" myapp:latest
