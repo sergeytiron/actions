@@ -37,106 +37,52 @@ jobs:
         with:
           fetch-depth: 2  # Needed to get the changed files
 
-      - name: Detect changed projects
+      # Using Paths Filter to detect changed files
+      - name: Filter paths
+        uses: dorny/paths-filter@v2
+        id: filter
+        with:
+          filters: |
+            project-main:
+              - 'project-main/**'
+            project-a:
+              - 'project-a/**'
+            project-b:
+              - 'project-b/**'
+      
+      # Dynamic matrix generation using a specialized action
+      - name: Generate Matrix
         id: set-matrix
+        uses: jobily/matrix-includes-builder@v1
+        with:
+          # Base matrix that will be included if deploy_all is true
+          base: |
+            [
+              {"project_path": "project-main", "project_name": "Main Project", "image_tag": "project-main:latest"},
+              {"project_path": "project-a", "project_name": "Project A", "image_tag": "project-a:latest"},
+              {"project_path": "project-b", "project_name": "Project B", "image_tag": "project-b:latest"}
+            ]
+          # Logic for each project
+          conditions: |
+            [
+              {
+                "if": "${{ github.event.inputs.deploy_all == 'true' || (github.event.inputs.specific_project == 'project-main' && github.event.inputs.specific_project != '') || steps.filter.outputs.project-main == 'true' }}",
+                "value": {"project_path": "project-main", "project_name": "Main Project", "image_tag": "project-main:latest"}
+              },
+              {
+                "if": "${{ github.event.inputs.deploy_all == 'true' || (github.event.inputs.specific_project == 'project-a' && github.event.inputs.specific_project != '') || steps.filter.outputs.project-a == 'true' }}",
+                "value": {"project_path": "project-a", "project_name": "Project A", "image_tag": "project-a:latest"}
+              },
+              {
+                "if": "${{ github.event.inputs.deploy_all == 'true' || (github.event.inputs.specific_project == 'project-b' && github.event.inputs.specific_project != '') || steps.filter.outputs.project-b == 'true' }}",
+                "value": {"project_path": "project-b", "project_name": "Project B", "image_tag": "project-b:latest"}
+              }
+            ]
+
+      # Display the matrix for debugging
+      - name: Debug matrix output
         run: |
-          # Function to add a project to our projects array
-          add_project() {
-            local project=$1
-            if [[ ! " ${projects[@]} " =~ " ${project} " ]]; then
-              projects+=("$project")
-            fi
-          }
-          
-          # Initialize empty array for projects
-          projects=()
-          
-          # Handle direct workflow dispatch with specific project
-          if [[ -n "${{ github.event.inputs.specific_project }}" ]]; then
-            specific_project="${{ github.event.inputs.specific_project }}"
-            if [[ -d "$specific_project" && -f "$specific_project/Dockerfile" ]]; then
-              add_project "$specific_project"
-              echo "Including specifically requested project: $specific_project"
-            else
-              echo "Warning: Requested project $specific_project not found or does not contain a Dockerfile"
-            fi
-          # Handle deploy all flag
-          elif [[ "${{ github.event.inputs.deploy_all }}" == "true" ]]; then
-            # Find all directories with Dockerfiles
-            for dir in project-*/; do
-              dir=${dir%/}  # Remove trailing slash
-              if [[ -f "$dir/Dockerfile" ]]; then
-                add_project "$dir"
-                echo "Including project: $dir (deploy all flag is set)"
-              fi
-            done
-          # Detect changes
-          else
-            # For push events, check what files were changed
-            if [[ "${{ github.event_name }}" == "push" ]]; then
-              # Get list of changed files
-              git diff --name-only HEAD^ HEAD > changed_files.txt
-              
-              # Check each project directory for changes
-              for dir in project-*/; do
-                dir=${dir%/}  # Remove trailing slash
-                if grep -q "^$dir/" changed_files.txt; then
-                  add_project "$dir"
-                  echo "Including project: $dir (detected changes)"
-                fi
-              done
-            # Fallback to all projects if not a push (should not happen with our triggers)
-            else
-              for dir in project-*/; do
-                dir=${dir%/}  # Remove trailing slash
-                if [[ -f "$dir/Dockerfile" ]]; then
-                  add_project "$dir"
-                  echo "Including project: $dir (fallback)"
-                fi
-              done
-            fi
-          fi
-          
-          # Create JSON matrix
-          if [[ ${#projects[@]} -eq 0 ]]; then
-            echo "No projects to deploy. Falling back to all projects."
-            # Find all directories with Dockerfiles as fallback
-            for dir in project-*/; do
-              dir=${dir%/}
-              if [[ -f "$dir/Dockerfile" ]]; then
-                add_project "$dir"
-                echo "Fallback: Including project: $dir"
-              fi
-            done
-          fi
-          
-          # Create project info
-          project_matrix="["
-          for project in "${projects[@]}"; do
-            # Extract project name removing the project- prefix
-            project_name=$(echo "$project" | sed 's/project-//')
-            
-            # Set display name with proper capitalization
-            if [[ "$project_name" == "main" ]]; then
-              display_name="Main Project"
-            else
-              # Capitalize first letter
-              display_name="Project ${project_name^}"
-            fi
-            
-            # Set image tag
-            image_tag="${project}:latest"
-            
-            # Append to matrix
-            if [[ "$project" != "${projects[0]}" ]]; then
-              project_matrix+=","
-            fi
-            project_matrix+="{\"project_path\":\"$project\",\"project_name\":\"$display_name\",\"image_tag\":\"$image_tag\"}"
-          done
-          project_matrix+="]"
-          
-          echo "matrix=$project_matrix" >> $GITHUB_OUTPUT
-          echo "Projects to deploy: $project_matrix"
+          echo 'Matrix: ${{ steps.set-matrix.outputs.matrix }}'
 
   # Build and deploy each project in parallel
   build:
