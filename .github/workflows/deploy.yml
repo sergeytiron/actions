@@ -1,21 +1,24 @@
-name: Multi-Project Sequential Deployment
+name: Multi-Project Deployment
 
 on:
   push:
     branches:
       - main
-  # Allow manual trigger with project selection
+    paths:
+      - 'project-*/Dockerfile'
+      - '.github/workflows/**'
+  # Allow manual trigger with options
   workflow_dispatch:
     inputs:
-      project:
-        description: 'Project to deploy'
+      deploy_all:
+        description: 'Deploy all projects regardless of changes'
         required: true
-        type: choice
-        options:
-          - main
-          - project-a
-          - project-b
-        default: 'main'
+        type: boolean
+        default: false
+      specific_project:
+        description: 'Specific project to deploy (leave empty to auto-detect changes)'
+        required: false
+        type: string
 
 # IMPORTANT: For the approval gates to work, you MUST configure environments in GitHub:
 # 1. Go to your repository settings -> Environments
@@ -23,44 +26,128 @@ on:
 # 3. For 'staging' and 'production', enable "Required reviewers" and add reviewers
 # Without this configuration, the workflow will NOT pause for approval
 jobs:
-  # Determine which project to build
-  project-config:
+  # Detect changed projects
+  detect-changes:
     runs-on: ubuntu-latest
     outputs:
-      project_path: ${{ steps.set-project.outputs.project_path }}
-      project_name: ${{ steps.set-project.outputs.project_name }}
-      image_tag: ${{ steps.set-project.outputs.image_tag }}
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
-      - name: Set project parameters
-        id: set-project
-        run: |
-          # Default to workflow_dispatch input, fallback to 'main' if not provided
-          PROJECT="${{ github.event.inputs.project || 'main' }}"
-          
-          # Set output values based on the selected project
-          if [ "$PROJECT" = "project-a" ]; then
-            echo "project_path=project-a" >> $GITHUB_OUTPUT
-            echo "project_name=Project A" >> $GITHUB_OUTPUT
-            echo "image_tag=project-a:latest" >> $GITHUB_OUTPUT
-          elif [ "$PROJECT" = "project-b" ]; then
-            echo "project_path=project-b" >> $GITHUB_OUTPUT
-            echo "project_name=Project B" >> $GITHUB_OUTPUT
-            echo "image_tag=project-b:latest" >> $GITHUB_OUTPUT
-          else
-            echo "project_path=." >> $GITHUB_OUTPUT
-            echo "project_name=Main Project" >> $GITHUB_OUTPUT
-            echo "image_tag=myapp:latest" >> $GITHUB_OUTPUT
-          fi
-      
-      - name: Display project info
-        run: |
-          echo "Deploying project: ${{ steps.set-project.outputs.project_name }}"
-          echo "Project path: ${{ steps.set-project.outputs.project_path }}"
-          echo "Docker image tag: ${{ steps.set-project.outputs.image_tag }}"
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 2  # Needed to get the changed files
 
+      - name: Detect changed projects
+        id: set-matrix
+        run: |
+          # Function to add a project to our projects array
+          add_project() {
+            local project=$1
+            if [[ ! " ${projects[@]} " =~ " ${project} " ]]; then
+              projects+=("$project")
+            fi
+          }
+          
+          # Initialize empty array for projects
+          projects=()
+          
+          # Handle direct workflow dispatch with specific project
+          if [[ -n "${{ github.event.inputs.specific_project }}" ]]; then
+            specific_project="${{ github.event.inputs.specific_project }}"
+            if [[ -d "$specific_project" && -f "$specific_project/Dockerfile" ]]; then
+              add_project "$specific_project"
+              echo "Including specifically requested project: $specific_project"
+            else
+              echo "Warning: Requested project $specific_project not found or does not contain a Dockerfile"
+            fi
+          # Handle deploy all flag
+          elif [[ "${{ github.event.inputs.deploy_all }}" == "true" ]]; then
+            # Find all directories with Dockerfiles
+            for dir in project-*/; do
+              dir=${dir%/}  # Remove trailing slash
+              if [[ -f "$dir/Dockerfile" ]]; then
+                add_project "$dir"
+                echo "Including project: $dir (deploy all flag is set)"
+              fi
+            done
+          # Detect changes
+          else
+            # For push events, check what files were changed
+            if [[ "${{ github.event_name }}" == "push" ]]; then
+              # Get list of changed files
+              git diff --name-only HEAD^ HEAD > changed_files.txt
+              
+              # Check each project directory for changes
+              for dir in project-*/; do
+                dir=${dir%/}  # Remove trailing slash
+                if grep -q "^$dir/" changed_files.txt; then
+                  add_project "$dir"
+                  echo "Including project: $dir (detected changes)"
+                fi
+              done
+            # Fallback to all projects if not a push (should not happen with our triggers)
+            else
+              for dir in project-*/; do
+                dir=${dir%/}  # Remove trailing slash
+                if [[ -f "$dir/Dockerfile" ]]; then
+                  add_project "$dir"
+                  echo "Including project: $dir (fallback)"
+                fi
+              done
+            fi
+          fi
+          
+          # Create JSON matrix
+          if [[ ${#projects[@]} -eq 0 ]]; then
+            echo "No projects to deploy. Falling back to all projects."
+            # Find all directories with Dockerfiles as fallback
+            for dir in project-*/; do
+              dir=${dir%/}
+              if [[ -f "$dir/Dockerfile" ]]; then
+                add_project "$dir"
+                echo "Fallback: Including project: $dir"
+              fi
+            done
+          fi
+          
+          # Create project info
+          project_matrix="["
+          for project in "${projects[@]}"; do
+            # Extract project name removing the project- prefix
+            project_name=$(echo "$project" | sed 's/project-//')
+            
+            # Set display name with proper capitalization
+            if [[ "$project_name" == "main" ]]; then
+              display_name="Main Project"
+            else
+              # Capitalize first letter
+              display_name="Project ${project_name^}"
+            fi
+            
+            # Set image tag
+            image_tag="${project}:latest"
+            
+            # Append to matrix
+            if [[ "$project" != "${projects[0]}" ]]; then
+              project_matrix+=","
+            fi
+            project_matrix+="{\"project_path\":\"$project\",\"project_name\":\"$display_name\",\"image_tag\":\"$image_tag\"}"
+          done
+          project_matrix+="]"
+          
+          echo "matrix=$project_matrix" >> $GITHUB_OUTPUT
+          echo "Projects to deploy: $project_matrix"
+
+  # Build and deploy each project in parallel
   build:
-    needs: project-config
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.matrix != '[]' }}
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        project: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
+      fail-fast: false
+    name: Build ${{ matrix.project.project_name }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -68,124 +155,176 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
 
-      - name: Build and push Docker image
+      - name: Build Docker image
         uses: docker/build-push-action@v4
         with:
-          context: ${{ needs.project-config.outputs.project_path }}
+          context: ${{ matrix.project.project_path }}
           push: false
           load: true
-          tags: ${{ needs.project-config.outputs.image_tag }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tags: ${{ matrix.project.image_tag }}
+          cache-from: type=gha,scope=${{ matrix.project.project_path }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.project.project_path }}
 
       - name: Save Docker image as artifact
         run: |
-          docker save ${{ needs.project-config.outputs.image_tag }} > docker-image.tar
+          docker save ${{ matrix.project.image_tag }} > docker-image-${{ matrix.project.project_path }}.tar
           
       - name: Upload Docker image as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: docker-image
-          path: docker-image.tar
+          name: docker-image-${{ matrix.project.project_path }}
+          path: docker-image-${{ matrix.project.project_path }}.tar
           retention-days: 1
           
       - name: Create build info file
         run: |
-          echo "${{ needs.project-config.outputs.project_name }}" > build-info.txt
-          echo "${{ needs.project-config.outputs.image_tag }}" >> build-info.txt
+          echo "${{ matrix.project.project_name }}" > build-info-${{ matrix.project.project_path }}.txt
+          echo "${{ matrix.project.image_tag }}" >> build-info-${{ matrix.project.project_path }}.txt
           
       - name: Upload build info as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: build-info
-          path: build-info.txt
+          name: build-info-${{ matrix.project.project_path }}
+          path: build-info-${{ matrix.project.project_path }}.txt
           retention-days: 1
 
-  deploy-dev:
-    needs: [project-config, build]
+  # Deploy to Development Environment
+  dev-deployment:
+    needs: [detect-changes, build]
+    if: ${{ needs.detect-changes.outputs.matrix != '[]' }}
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        project: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
+      fail-fast: false
+    name: Dev - ${{ matrix.project.project_name }}
     environment:
       name: development
     steps:
       - name: Download build info
         uses: actions/download-artifact@v4
         with:
-          name: build-info
+          name: build-info-${{ matrix.project.project_path }}
           
       - name: Download Docker image
         uses: actions/download-artifact@v4
         with:
-          name: docker-image
+          name: docker-image-${{ matrix.project.project_path }}
           
       - name: Load Docker image
-        run: docker load < docker-image.tar
+        run: docker load < docker-image-${{ matrix.project.project_path }}.tar
         
       - name: Run container in development
         run: |
-          IMAGE_TAG=$(tail -n 1 build-info.txt)
+          PROJECT_PATH="${{ matrix.project.project_path }}"
+          IMAGE_TAG=$(tail -n 1 build-info-${PROJECT_PATH}.txt)
+          PROJECT_NAME=$(head -n 1 build-info-${PROJECT_PATH}.txt)
+          
+          echo "Deploying $PROJECT_NAME to development environment..."
+          
           docker run --rm \
             -e ENVIRONMENT="development" \
             -e ENV_CONFIG="Debug mode enabled" \
             ${IMAGE_TAG}
-          PROJECT_NAME=$(head -n 1 build-info.txt)
-          echo "${PROJECT_NAME} development deployment completed successfully"
+            
+          echo "$PROJECT_NAME development deployment completed successfully"
 
-  deploy-staging:
-    needs: [project-config, deploy-dev]
+  # Wait for staging approval
+  staging-approval:
+    needs: dev-deployment
     runs-on: ubuntu-latest
     environment:
       name: staging
       url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
+      - name: Approval gate
+        run: echo "Deployment to staging environment approved!"
+
+  # Deploy to Staging Environment
+  staging-deployment:
+    needs: [detect-changes, staging-approval]
+    if: ${{ needs.detect-changes.outputs.matrix != '[]' }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        project: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
+      fail-fast: false
+    name: Staging - ${{ matrix.project.project_name }}
+    steps:
       - name: Download build info
         uses: actions/download-artifact@v4
         with:
-          name: build-info
+          name: build-info-${{ matrix.project.project_path }}
           
       - name: Download Docker image
         uses: actions/download-artifact@v4
         with:
-          name: docker-image
+          name: docker-image-${{ matrix.project.project_path }}
           
       - name: Load Docker image
-        run: docker load < docker-image.tar
+        run: docker load < docker-image-${{ matrix.project.project_path }}.tar
         
       - name: Run container in staging
         run: |
-          IMAGE_TAG=$(tail -n 1 build-info.txt)
+          PROJECT_PATH="${{ matrix.project.project_path }}"
+          IMAGE_TAG=$(tail -n 1 build-info-${PROJECT_PATH}.txt)
+          PROJECT_NAME=$(head -n 1 build-info-${PROJECT_PATH}.txt)
+          
+          echo "Deploying $PROJECT_NAME to staging environment..."
+          
           docker run --rm \
             -e ENVIRONMENT="staging" \
             -e ENV_CONFIG="Performance testing enabled" \
             ${IMAGE_TAG}
-          PROJECT_NAME=$(head -n 1 build-info.txt)
-          echo "${PROJECT_NAME} staging deployment completed successfully"
+            
+          echo "$PROJECT_NAME staging deployment completed successfully"
 
-  deploy-production:
-    needs: [project-config, deploy-staging]
+  # Wait for production approval
+  production-approval:
+    needs: staging-deployment
     runs-on: ubuntu-latest
     environment:
       name: production
       url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
+      - name: Approval gate
+        run: echo "Deployment to production environment approved!"
+
+  # Deploy to Production Environment
+  production-deployment:
+    needs: [detect-changes, production-approval]
+    if: ${{ needs.detect-changes.outputs.matrix != '[]' }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        project: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
+      fail-fast: false
+    name: Production - ${{ matrix.project.project_name }}
+    steps:
       - name: Download build info
         uses: actions/download-artifact@v4
         with:
-          name: build-info
+          name: build-info-${{ matrix.project.project_path }}
           
       - name: Download Docker image
         uses: actions/download-artifact@v4
         with:
-          name: docker-image
+          name: docker-image-${{ matrix.project.project_path }}
           
       - name: Load Docker image
-        run: docker load < docker-image.tar
+        run: docker load < docker-image-${{ matrix.project.project_path }}.tar
         
       - name: Run container in production
         run: |
-          IMAGE_TAG=$(tail -n 1 build-info.txt)
+          PROJECT_PATH="${{ matrix.project.project_path }}"
+          IMAGE_TAG=$(tail -n 1 build-info-${PROJECT_PATH}.txt)
+          PROJECT_NAME=$(head -n 1 build-info-${PROJECT_PATH}.txt)
+          
+          echo "Deploying $PROJECT_NAME to production environment..."
+          
           docker run --rm \
             -e ENVIRONMENT="production" \
             -e ENV_CONFIG="High availability mode" \
             ${IMAGE_TAG}
-          PROJECT_NAME=$(head -n 1 build-info.txt)
-          echo "${PROJECT_NAME} production deployment completed successfully"
+            
+          echo "$PROJECT_NAME production deployment completed successfully"
