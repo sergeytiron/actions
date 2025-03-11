@@ -2,7 +2,7 @@ FROM python:3.9-slim
 
 # Set a label for the environment (will be overridden during deployment)
 ENV ENVIRONMENT="default"
-ENV PROJECT_NAME="Project B"
+ENV PROJECT_NAME="Project-B"
 
 # Create app directory
 WORKDIR /app
